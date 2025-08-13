@@ -7,6 +7,9 @@ type: middleware
 # The import path of your plugin.
 import: github.com/innolabsdev/traefik-payload-router
 
+# icon
+iconPath: .assets/icon.png
+
 # A brief description of what your plugin is doing.
 summary: Routes requests to different backends based on configurable JSON fields in the payload
 
