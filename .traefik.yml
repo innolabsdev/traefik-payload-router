@@ -1,0 +1,23 @@
+# The name of your plugin as displayed in the Plugins Catalog web UI.
+displayName: Payload Router
+
+# For now, `middleware` is the only type available.
+type: middleware
+
+# The import path of your plugin.
+import: github.com/innolabsdev/traefik-payload-router
+
+# A brief description of what your plugin is doing.
+summary: Routes requests to different backends based on configurable JSON fields in the payload
+
+# Configuration data for your plugin.
+# This is mandatory,
+# and Plugins Catalog will try to execute the plugin with the data you provide as part of its startup validity tests.
+testData:
+  fieldName: "client_id"
+  redirectMappings:
+    "foo": "https://foo-backend.example.com/webhooks"
+    "bar": "https://bar-backend.example.com/webhooks"
+  defaultRedirect: "https://default-backend.example.com/webhooks"
+  webhookPath: "/webhooks"
+  statusCode: 302
