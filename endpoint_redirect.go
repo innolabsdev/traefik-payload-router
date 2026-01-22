@@ -13,7 +13,10 @@ import (
 
 // Config the plugin configuration.
 type Config struct {
-	// RedirectMappings maps endpoint_id values to redirect URLs
+	// FieldName is the JSON field name to use for routing decisions (default: "endpoint_id")
+	FieldName string `json:"fieldName,omitempty"`
+
+	// RedirectMappings maps field values to redirect URLs
 	RedirectMappings map[string]string `json:"redirectMappings,omitempty"`
 
 	// DefaultRedirect is the default URL to redirect to if no mapping is found
@@ -26,16 +29,10 @@ type Config struct {
 	StatusCode int `json:"statusCode,omitempty"`
 }
 
-// WebhookPayload represents the structure of the incoming webhook JSON
-type WebhookPayload struct {
-	Type       string `json:"type"`
-	DocumentID string `json:"document_id"`
-	EndpointID string `json:"endpoint_id"`
-}
-
 // CreateConfig creates the default plugin configuration.
 func CreateConfig() *Config {
 	return &Config{
+		FieldName:        "endpoint_id",
 		RedirectMappings: make(map[string]string),
 		DefaultRedirect:  "",
 		WebhookPath:      "/webhooks",
@@ -43,10 +40,11 @@ func CreateConfig() *Config {
 	}
 }
 
-// EndpointRedirect a plugin to redirect based on endpoint_id from JSON body.
+// EndpointRedirect a plugin to redirect based on a configurable JSON field.
 type EndpointRedirect struct {
 	next             http.Handler
 	name             string
+	fieldName        string
 	redirectMappings map[string]string
 	defaultRedirect  string
 	webhookPath      string
@@ -55,6 +53,10 @@ type EndpointRedirect struct {
 
 // New creates a new EndpointRedirect plugin.
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	if config.FieldName == "" {
+		config.FieldName = "endpoint_id"
+	}
+
 	if config.WebhookPath == "" {
 		config.WebhookPath = "/webhooks"
 	}
@@ -64,9 +66,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 
 	// Validate redirect URLs
-	for endpointID, redirectURL := range config.RedirectMappings {
+	for fieldValue, redirectURL := range config.RedirectMappings {
 		if _, err := url.Parse(redirectURL); err != nil {
-			return nil, fmt.Errorf("invalid redirect URL for endpoint_id '%s': %w", endpointID, err)
+			return nil, fmt.Errorf("invalid redirect URL for '%s': %w", fieldValue, err)
 		}
 	}
 
@@ -79,6 +81,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	return &EndpointRedirect{
 		next:             next,
 		name:             name,
+		fieldName:        config.FieldName,
 		redirectMappings: config.RedirectMappings,
 		defaultRedirect:  config.DefaultRedirect,
 		webhookPath:      config.WebhookPath,
@@ -109,26 +112,45 @@ func (e *EndpointRedirect) ServeHTTP(rw http.ResponseWriter, req *http.Request) 
 	// Restore the body for the next handler (in case we don't redirect)
 	req.Body = io.NopCloser(bytes.NewBuffer(body))
 
-	// Parse the JSON payload
-	var payload WebhookPayload
+	// Parse the JSON payload into a generic map
+	var payload map[string]interface{}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		// If JSON parsing fails, continue to next handler
 		e.next.ServeHTTP(rw, req)
 		return
 	}
 
-	// If no endpoint_id is found, proceed to next handler
-	if payload.EndpointID == "" {
+	// Extract the configured field value
+	fieldValue, ok := payload[e.fieldName]
+	if !ok {
 		e.next.ServeHTTP(rw, req)
 		return
 	}
 
-	// Clean the endpoint_id (trim whitespace)
-	endpointID := strings.TrimSpace(payload.EndpointID)
+	// Convert field value to string
+	var fieldStr string
+	switch v := fieldValue.(type) {
+	case string:
+		fieldStr = v
+	case float64:
+		fieldStr = fmt.Sprintf("%.0f", v)
+	default:
+		e.next.ServeHTTP(rw, req)
+		return
+	}
+
+	// If field is empty, proceed to next handler
+	if fieldStr == "" {
+		e.next.ServeHTTP(rw, req)
+		return
+	}
+
+	// Clean the field value (trim whitespace)
+	fieldStr = strings.TrimSpace(fieldStr)
 
 	// Look for a matching redirect URL
 	var redirectURL string
-	if mappedURL, exists := e.redirectMappings[endpointID]; exists {
+	if mappedURL, exists := e.redirectMappings[fieldStr]; exists {
 		redirectURL = mappedURL
 	} else if e.defaultRedirect != "" {
 		redirectURL = e.defaultRedirect

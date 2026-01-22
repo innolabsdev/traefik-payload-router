@@ -14,6 +14,9 @@ func TestCreateConfig(t *testing.T) {
 	if config == nil {
 		t.Fatal("CreateConfig returned nil")
 	}
+	if config.FieldName != "endpoint_id" {
+		t.Errorf("Expected FieldName to be 'endpoint_id', got %s", config.FieldName)
+	}
 	if config.RedirectMappings == nil {
 		t.Fatal("RedirectMappings should not be nil")
 	}
@@ -266,6 +269,50 @@ func TestEndpointRedirect_ServeHTTP(t *testing.T) {
 
 		if !nextCalled {
 			t.Error("Expected next handler to be called when endpoint_id is missing")
+		}
+	})
+
+	// Test custom fieldName (client_id instead of endpoint_id)
+	t.Run("custom fieldName routing", func(t *testing.T) {
+		config := &Config{
+			FieldName: "client_id",
+			RedirectMappings: map[string]string{
+				"foo": mockServer.URL,
+			},
+			WebhookPath: "/webhooks",
+			StatusCode:  302,
+		}
+
+		ctx := context.Background()
+		nextCalled := false
+		next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			nextCalled = true
+			rw.WriteHeader(http.StatusOK)
+		})
+
+		handler, err := New(ctx, next, config, "test-plugin")
+		if err != nil {
+			t.Fatalf("Failed to create handler: %v", err)
+		}
+
+		jsonPayload := `{
+			"event": "order.created",
+			"client_id": "foo",
+			"data": {"order_id": "12345"}
+		}`
+
+		req := httptest.NewRequest("POST", "/webhooks", strings.NewReader(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		rw := httptest.NewRecorder()
+
+		handler.ServeHTTP(rw, req)
+
+		if nextCalled {
+			t.Error("Expected next handler NOT to be called when forwarding with custom fieldName")
+		}
+
+		if rw.Code != http.StatusOK {
+			t.Errorf("Expected status code %d, got %d", http.StatusOK, rw.Code)
 		}
 	})
 
